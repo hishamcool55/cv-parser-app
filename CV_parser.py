@@ -67,9 +67,6 @@ st.title("CV Parser App")
 # File uploader
 uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
 
-# Path to save the Excel file
-output_excel = st.text_input("Enter the path where the Excel file should be saved (including filename and .xlsx extension)")
-
 # Button to start the parsing process
 if st.button("Parse Resumes"):
     if uploaded_files:
@@ -83,11 +80,21 @@ if st.button("Parse Resumes"):
         # Convert data to a pandas DataFrame
         df = pd.DataFrame(data)
 
-        # Save the data to an Excel file
-        if output_excel:
-            df.to_excel(output_excel, index=False)
-            st.success(f"Data extraction completed! Excel file saved to {output_excel}")
-        else:
-            st.error("Please provide a valid path to save the Excel file.")
+        # Create an in-memory buffer to store the Excel file
+        buffer = io.BytesIO()
+
+        # Save the DataFrame to the buffer using the openpyxl engine
+        df.to_excel(buffer, engine='openpyxl', index=False)
+
+        # Move the buffer's pointer to the beginning
+        buffer.seek(0)
+
+        # Provide a download button for users to download the Excel file
+        st.download_button(
+            label="Download Excel file",
+            data=buffer,
+            file_name='parsed_resumes.xlsx',
+            mime='application/vnd.ms-excel'
+        )
     else:
         st.error("Please upload at least one PDF file.")
