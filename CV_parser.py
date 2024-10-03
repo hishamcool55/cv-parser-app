@@ -13,7 +13,7 @@ def sanitize_filename(filename):
     return re.sub(r'[^\w\s-]', '', filename).strip().replace(' ', '_')
 
 
-# Function to extract text from images using OCR.space API
+# Function to extract text from images using OCR.space API with better error handling
 def extract_text_from_image_api(image, filename, page_number):
     # Convert the image to bytes and send to OCR.space API
     api_url = "https://api.ocr.space/parse/image"
@@ -40,9 +40,20 @@ def extract_text_from_image_api(image, filename, page_number):
         st.error(f"Error: OCR API request failed with status {response.status_code}")
         return ""
 
-    # Parse and return the OCR text from the API response
+    # Ensure the response contains 'ParsedResults'
     result = response.json()
-    extracted_text = result.get("ParsedResults")[0].get("ParsedText", "")
+    if "ParsedResults" not in result or result["ParsedResults"] is None:
+        st.error(f"Error: No ParsedResults found in OCR API response for file '{filename}', page {page_number}.")
+        return ""
+
+    # Extract the OCR text from the API response
+    parsed_results = result.get("ParsedResults")
+    if not parsed_results or len(parsed_results) == 0:
+        st.warning(f"No text found in OCR response for file '{filename}', page {page_number}.")
+        return ""
+
+    # Extract the text
+    extracted_text = parsed_results[0].get("ParsedText", "")
 
     # Print a message to indicate that OCR was used
     if extracted_text.strip():
