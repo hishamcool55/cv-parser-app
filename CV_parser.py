@@ -1,18 +1,60 @@
+import requests
 import streamlit as st
 import re
 import pdfplumber
-import pytesseract
 from PIL import Image
 import io
 import pandas as pd
+
 
 # Function to sanitize filenames by removing special characters
 def sanitize_filename(filename):
     # Replace special characters with underscores
     return re.sub(r'[^\w\s-]', '', filename).strip().replace(' ', '_')
 
-# Function to extract text from a PDF, skipping image-only pages
-def extract_text_from_pdf(pdf_path):
+
+# Function to extract text from images using OCR.space API
+def extract_text_from_image_api(image, filename, page_number):
+    # Convert the image to bytes and send to OCR.space API
+    api_url = "https://api.ocr.space/parse/image"
+    api_key = "K81881349288957"  # Your OCR.space API key
+
+    # Convert the image to bytes
+    image_bytes = io.BytesIO()
+    image.save(image_bytes, format='PNG')
+    image_bytes = image_bytes.getvalue()
+
+    # Send the image to OCR API
+    payload = {
+        'apikey': api_key,
+        'language': 'ara,eng',  # Support for Arabic and English
+    }
+    files = {
+        'file': ('image.png', image_bytes, 'image/png'),
+    }
+
+    response = requests.post(api_url, files=files, data=payload)
+
+    # Check for errors in the API response
+    if response.status_code != 200:
+        st.error(f"Error: OCR API request failed with status {response.status_code}")
+        return ""
+
+    # Parse and return the OCR text from the API response
+    result = response.json()
+    extracted_text = result.get("ParsedResults")[0].get("ParsedText", "")
+
+    # Print a message to indicate that OCR was used
+    if extracted_text.strip():
+        st.write(f"OCR was used on page {page_number} in file '{filename}'.")
+    else:
+        st.warning(f"OCR on page {page_number} in file '{filename}' found no readable text.")
+
+    return extracted_text
+
+
+# Function to extract text from a PDF, using OCR on image-only pages
+def extract_text_from_pdf(pdf_path, filename):
     with pdfplumber.open(pdf_path) as pdf:
         full_text = ""
         for page in pdf.pages:
@@ -22,10 +64,20 @@ def extract_text_from_pdf(pdf_path):
                 # If there is text, extract and append it
                 full_text += text + "\n"
             else:
-                # If no text is found, warn and skip OCR on images
-                st.warning(f"Skipping page {page.page_number}: No text found, and skipping OCR on image.")
-                continue  # Skip to the next page
+                # If no text is found, attempt OCR on the image
+                st.warning(f"Page {page.page_number} in file '{filename}' has no text. Attempting OCR on image.")
+
+                # Get the image from the PDF page
+                image = page.to_image().original
+
+                # Perform OCR using the API (Arabic + English)
+                ocr_text = extract_text_from_image_api(image, filename, page.page_number)
+
+                # If OCR found any text, add it to the full text
+                if ocr_text.strip():
+                    full_text += ocr_text + "\n"
         return full_text
+
 
 # Function to clean and extract name, email, and phone from the extracted text
 def extract_info_from_text(extracted_text):
@@ -59,11 +111,13 @@ def extract_info_from_text(extracted_text):
 
     return info
 
+
 # Function to process a single PDF file
-def process_pdf_file(uploaded_file):
-    extracted_text = extract_text_from_pdf(uploaded_file)
+def process_pdf_file(uploaded_file, sanitized_filename):
+    extracted_text = extract_text_from_pdf(uploaded_file, sanitized_filename)
     info = extract_info_from_text(extracted_text)
     return info
+
 
 # Streamlit interface
 st.title("CV Parser App")
@@ -93,7 +147,7 @@ if st.button("Upload Resumes"):
 
             # Process the file (extracting text and info)
             try:
-                info = process_pdf_file(uploaded_file)
+                info = process_pdf_file(uploaded_file, sanitized_filename)
                 info['File Name'] = sanitized_filename
                 data.append(info)
             except Exception as e:
