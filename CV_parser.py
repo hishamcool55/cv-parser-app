@@ -1,13 +1,17 @@
 import streamlit as st
+import re
 import pdfplumber
 import pytesseract
 from PIL import Image
 import io
-import os
-import re
 import pandas as pd
 
-# Function to extract text from a PDF with fallback to OCR for image-based content
+# Function to sanitize filenames by removing special characters
+def sanitize_filename(filename):
+    # Replace special characters with underscores
+    return re.sub(r'[^\w\s-]', '', filename).strip().replace(' ', '_')
+
+# Function to extract text from a PDF, skipping image-only pages
 def extract_text_from_pdf(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
         full_text = ""
@@ -55,7 +59,7 @@ def extract_info_from_text(extracted_text):
 
     return info
 
-# Function to process a single PDF
+# Function to process a single PDF file
 def process_pdf_file(uploaded_file):
     extracted_text = extract_text_from_pdf(uploaded_file)
     info = extract_info_from_text(extracted_text)
@@ -64,37 +68,60 @@ def process_pdf_file(uploaded_file):
 # Streamlit interface
 st.title("CV Parser App")
 
-# File uploader
+# File uploader (accepting multiple PDF files)
 uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
 
 # Button to start the parsing process
-if st.button("Parse Resumes"):
+if st.button("Upload Resumes"):
     if uploaded_files:
         data = []
         for uploaded_file in uploaded_files:
-            st.write(f"Processing file: {uploaded_file.name}")
-            info = process_pdf_file(uploaded_file)
-            info['File Name'] = uploaded_file.name
-            data.append(info)
+            # Sanitize the filename
+            sanitized_filename = sanitize_filename(uploaded_file.name)
 
-        # Convert data to a pandas DataFrame
-        df = pd.DataFrame(data)
+            # Log the sanitized filename for debugging
+            st.write(f"Processing file: {sanitized_filename}")
 
-        # Create an in-memory buffer to store the Excel file
-        buffer = io.BytesIO()
+            # Check file size
+            file_size = uploaded_file.size
+            st.write(f"File size: {file_size} bytes")
 
-        # Save the DataFrame to the buffer using the openpyxl engine
-        df.to_excel(buffer, engine='openpyxl', index=False)
+            # If the file size exceeds a limit, skip processing (Example: 10MB)
+            if file_size > 10 * 1024 * 1024:  # 10MB limit
+                st.error(f"File '{sanitized_filename}' is too large. Maximum allowed size is 10MB.")
+                continue
 
-        # Move the buffer's pointer to the beginning
-        buffer.seek(0)
+            # Process the file (extracting text and info)
+            try:
+                info = process_pdf_file(uploaded_file)
+                info['File Name'] = sanitized_filename
+                data.append(info)
+            except Exception as e:
+                # Log the full error message for debugging
+                st.error(f"Error processing file '{sanitized_filename}': {str(e)}")
+                continue
 
-        # Provide a download button for users to download the Excel file
-        st.download_button(
-            label="Download Excel file",
-            data=buffer,
-            file_name='parsed_resumes.xlsx',
-            mime='application/vnd.ms-excel'
-        )
+        # If we have valid data, display and allow download
+        if data:
+            df = pd.DataFrame(data)
+
+            # Create an in-memory buffer to store the Excel file
+            buffer = io.BytesIO()
+
+            # Save the DataFrame to the buffer using the openpyxl engine
+            df.to_excel(buffer, engine='openpyxl', index=False)
+
+            # Move the buffer's pointer to the beginning
+            buffer.seek(0)
+
+            # Provide a download button for users to download the Excel file
+            st.download_button(
+                label="Download Excel file",
+                data=buffer,
+                file_name='parsed_resumes.xlsx',
+                mime='application/vnd.ms-excel'
+            )
+        else:
+            st.error("No valid resumes were processed.")
     else:
         st.error("Please upload at least one PDF file.")
