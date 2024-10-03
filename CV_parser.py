@@ -97,4 +97,3 @@ if st.button("Parse Resumes"):
         )
     else:
         st.error("Please upload at least one PDF file.")
-git add .
