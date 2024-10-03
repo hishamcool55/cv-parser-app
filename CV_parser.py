@@ -12,14 +12,15 @@ def extract_text_from_pdf(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
         full_text = ""
         for page in pdf.pages:
+            # Extract text from the page
             text = page.extract_text()
             if text:
+                # If there is text, extract and append it
                 full_text += text + "\n"
             else:
-                # Fall back to OCR if no text is detected on the page
-                image = page.to_image().original  # Use the image directly
-                ocr_text = pytesseract.image_to_string(image)
-                full_text += ocr_text + "\n"
+                # If no text is found, warn and skip OCR on images
+                st.warning(f"Skipping page {page.page_number}: No text found, and skipping OCR on image.")
+                continue  # Skip to the next page
         return full_text
 
 # Function to clean and extract name, email, and phone from the extracted text
