@@ -17,9 +17,8 @@ def extract_text_from_pdf(pdf_path):
                 full_text += text + "\n"
             else:
                 # Fall back to OCR if no text is detected on the page
-                image = page.to_image(resolution=300).original
-                img = Image.open(io.BytesIO(image))
-                ocr_text = pytesseract.image_to_string(img)
+                image = page.to_image().original  # Use the image directly
+                ocr_text = pytesseract.image_to_string(image)
                 full_text += ocr_text + "\n"
         return full_text
 
@@ -98,3 +97,4 @@ if st.button("Parse Resumes"):
         )
     else:
         st.error("Please upload at least one PDF file.")
+git add .
