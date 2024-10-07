@@ -3,8 +3,12 @@ import streamlit as st
 import re
 import pdfplumber
 from PIL import Image
+from docx import Document
 import io
 import pandas as pd
+
+# OCR.space API key (replace with your key)
+OCR_API_KEY = "K81881349288957"
 
 
 # Function to sanitize filenames by removing special characters
@@ -13,11 +17,9 @@ def sanitize_filename(filename):
     return re.sub(r'[^\w\s-]', '', filename).strip().replace(' ', '_')
 
 
-# Function to extract text from images using OCR.space API with better error handling
-def extract_text_from_image_api(image, filename, page_number):
-    # Convert the image to bytes and send to OCR.space API
+# Function to extract text from images using OCR.space API
+def extract_text_from_image_api(image):
     api_url = "https://api.ocr.space/parse/image"
-    api_key = "K81881349288957"  # Your OCR.space API key
 
     # Convert the image to bytes
     image_bytes = io.BytesIO()
@@ -26,8 +28,8 @@ def extract_text_from_image_api(image, filename, page_number):
 
     # Send the image to OCR API
     payload = {
-        'apikey': api_key,
-        'language': 'ara,eng',  # Support for Arabic and English
+        'apikey': OCR_API_KEY,
+        'language': 'ara,eng',  # Support both Arabic and English
     }
     files = {
         'file': ('image.png', image_bytes, 'image/png'),
@@ -40,54 +42,59 @@ def extract_text_from_image_api(image, filename, page_number):
         st.error(f"Error: OCR API request failed with status {response.status_code}")
         return ""
 
-    # Ensure the response contains 'ParsedResults'
     result = response.json()
-    if "ParsedResults" not in result or result["ParsedResults"] is None:
-        st.error(f"Error: No ParsedResults found in OCR API response for file '{filename}', page {page_number}.")
+    if "ParsedResults" not in result or not result["ParsedResults"]:
+        st.error("No ParsedResults found in the OCR API response.")
         return ""
 
-    # Extract the OCR text from the API response
-    parsed_results = result.get("ParsedResults")
-    if not parsed_results or len(parsed_results) == 0:
-        st.warning(f"No text found in OCR response for file '{filename}', page {page_number}.")
-        return ""
-
-    # Extract the text
-    extracted_text = parsed_results[0].get("ParsedText", "")
-
-    # Print a message to indicate that OCR was used
-    if extracted_text.strip():
-        st.write(f"OCR was used on page {page_number} in file '{filename}'.")
-    else:
-        st.warning(f"OCR on page {page_number} in file '{filename}' found no readable text.")
-
+    # Extract the text from the API response
+    extracted_text = result["ParsedResults"][0].get("ParsedText", "")
     return extracted_text
 
 
-# Function to extract text from a PDF, using OCR on image-only pages
-def extract_text_from_pdf(pdf_path, filename):
-    with pdfplumber.open(pdf_path) as pdf:
-        full_text = ""
+# Function to extract text from a PDF, handling both text and images
+def extract_text_from_pdf(pdf_file):
+    full_text = ""
+    with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             # Extract text from the page
             text = page.extract_text()
             if text:
-                # If there is text, extract and append it
                 full_text += text + "\n"
             else:
-                # If no text is found, attempt OCR on the image
-                st.warning(f"Page {page.page_number} in file '{filename}' has no text. Attempting OCR on image.")
-
-                # Get the image from the PDF page
-                image = page.to_image().original
-
-                # Perform OCR using the API (Arabic + English)
-                ocr_text = extract_text_from_image_api(image, filename, page.page_number)
-
-                # If OCR found any text, add it to the full text
-                if ocr_text.strip():
+                # If no text is found, attempt OCR on any images on the page
+                for image in page.images:
+                    img = page.to_image()
+                    ocr_text = extract_text_from_image_api(img.original)
                     full_text += ocr_text + "\n"
-        return full_text
+    return full_text
+
+
+# Function to extract text from a Word document, including OCR on images
+def extract_text_from_word(docx_file):
+    full_text = ""
+    doc = Document(docx_file)
+
+    # Extract text from paragraphs
+    for para in doc.paragraphs:
+        full_text += para.text + "\n"
+
+    # Extract images and perform OCR
+    for rel in doc.part.rels.values():
+        if "image" in rel.target_ref:
+            img_part = rel.target_part
+            img = Image.open(io.BytesIO(img_part.blob))
+            ocr_text = extract_text_from_image_api(img)
+            full_text += ocr_text + "\n"
+
+    return full_text
+
+
+# Function to extract text from an image file directly
+def extract_text_from_image_file(image_file):
+    img = Image.open(image_file)
+    ocr_text = extract_text_from_image_api(img)
+    return ocr_text
 
 
 # Function to clean and extract name, email, and phone from the extracted text
@@ -123,18 +130,34 @@ def extract_info_from_text(extracted_text):
     return info
 
 
-# Function to process a single PDF file
-def process_pdf_file(uploaded_file, sanitized_filename):
-    extracted_text = extract_text_from_pdf(uploaded_file, sanitized_filename)
+# Function to process files (PDF, Word, or Image)
+def process_file(uploaded_file, sanitized_filename):
+    extracted_text = ""
+
+    # Check file type and extract text accordingly
+    if sanitized_filename.endswith('.pdf'):
+        extracted_text = extract_text_from_pdf(uploaded_file)
+    elif sanitized_filename.endswith('.docx'):
+        extracted_text = extract_text_from_word(uploaded_file)
+    elif sanitized_filename.endswith(('.png', '.jpg', '.jpeg')):
+        extracted_text = extract_text_from_image_file(uploaded_file)
+
+    # Extract relevant information (Name, Email, Phone)
     info = extract_info_from_text(extracted_text)
+
+    # Debugging: Check if all fields are empty
+    if not info['Name'] and not info['Email'] and not info['Phone']:
+        st.warning(f"Failed to extract data from: {sanitized_filename}")
+
     return info
 
 
 # Streamlit interface
 st.title("CV Parser App")
 
-# File uploader (accepting multiple PDF files)
-uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
+# File uploader (accepting multiple PDFs, Word, and image files)
+uploaded_files = st.file_uploader("Choose PDF, Word, or Image files", type=["pdf", "docx", "png", "jpg", "jpeg"],
+                                  accept_multiple_files=True)
 
 # Button to start the parsing process
 if st.button("Upload Resumes"):
@@ -147,18 +170,9 @@ if st.button("Upload Resumes"):
             # Log the sanitized filename for debugging
             st.write(f"Processing file: {sanitized_filename}")
 
-            # Check file size
-            file_size = uploaded_file.size
-            st.write(f"File size: {file_size} bytes")
-
-            # If the file size exceeds a limit, skip processing (Example: 10MB)
-            if file_size > 10 * 1024 * 1024:  # 10MB limit
-                st.error(f"File '{sanitized_filename}' is too large. Maximum allowed size is 10MB.")
-                continue
-
             # Process the file (extracting text and info)
             try:
-                info = process_pdf_file(uploaded_file, sanitized_filename)
+                info = process_file(uploaded_file, sanitized_filename)
                 info['File Name'] = sanitized_filename
                 data.append(info)
             except Exception as e:
@@ -189,4 +203,4 @@ if st.button("Upload Resumes"):
         else:
             st.error("No valid resumes were processed.")
     else:
-        st.error("Please upload at least one PDF file.")
+        st.error("Please upload at least one file.")
