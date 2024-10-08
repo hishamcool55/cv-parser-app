@@ -4,10 +4,11 @@ from docx import Document
 import pandas as pd
 import streamlit as st
 import io
-import xlsxwriter
+import xlsxwriter  # Import xlsxwriter explicitly
 
 # Streamlit app title
 st.title("CV Parser App")
+
 
 # Function to extract all text from a PDF (adjusted for BytesIO file in Streamlit)
 def extract_text_from_pdf(pdf_file):
@@ -26,6 +27,7 @@ def extract_text_from_pdf(pdf_file):
         st.write(f"No text was found in the PDF file.")
     return full_text
 
+
 # Function to extract all text from a Word document (adjusted for BytesIO file in Streamlit)
 def extract_text_from_word(docx_file):
     full_text = ""
@@ -42,6 +44,7 @@ def extract_text_from_word(docx_file):
     if not full_text.strip():
         st.write(f"No text was found in the Word document.")
     return full_text
+
 
 # Enhanced Email Extraction (Handles emails split across lines or special formatting)
 def extract_email(text):
@@ -63,17 +66,27 @@ def extract_email(text):
                 return email.replace(' ', '')
     return None
 
-# Phone Number Extraction
+
+# Phone Number Extraction (Enhanced to handle various formats)
 def extract_phone_number(text):
-    PHONE_REGEX = r'(\+?\d{1,3}[- ]?\d{1,4}[- ]?\d{7,12})'
+    # Enhanced regular expression to handle different formats
+    PHONE_REGEX = r'(\+?\d{1,3}[-\s.]?\(?\d{1,4}?\)?[-\s.]?\d{1,4}[-\s.]?\d{1,4}[-\s.]?\d{1,9})'
+
     phone_matches = re.findall(PHONE_REGEX, text)
-    for phone in phone_matches:
-        clean_phone = re.sub(r'[^+\d]', '', phone)
-        if clean_phone.startswith('+') and len(clean_phone) == 12:
-            return clean_phone
-        elif clean_phone.startswith('0') and len(clean_phone) == 11:
-            return clean_phone
+    if phone_matches:
+        for phone in phone_matches:
+            clean_phone = re.sub(r'[^+\d]', '', phone)  # Remove non-digit characters but keep "+"
+            # Handle phone numbers that start with country code (+), 12 digits
+            if clean_phone.startswith('+') and 10 <= len(clean_phone) <= 14:
+                return clean_phone
+            # Handle phone numbers that start with "0", 11 digits (local numbers)
+            elif clean_phone.startswith('0') and len(clean_phone) == 11:
+                return clean_phone
+            # Handle phone numbers that may not start with "+" or "0"
+            elif len(clean_phone) >= 10:
+                return clean_phone
     return None
+
 
 # Function to extract Name (Focuses on the largest font size and first few words)
 def extract_name(extracted_text):
@@ -90,6 +103,7 @@ def extract_name(extracted_text):
             break
     return potential_name
 
+
 # Function to clean and extract name, email, and phone from the extracted text
 def extract_info_from_text(extracted_text):
     info = {
@@ -99,6 +113,7 @@ def extract_info_from_text(extracted_text):
     }
     return info
 
+
 # Function to process files (PDF, Word)
 def process_file(file, file_type):
     extracted_text = ""
@@ -107,6 +122,7 @@ def process_file(file, file_type):
     elif file_type == '.docx':
         extracted_text = extract_text_from_word(file)
     return extract_info_from_text(extracted_text)
+
 
 # Main Streamlit logic
 uploaded_files = st.file_uploader("Upload CVs (PDF or Word)", type=['pdf', 'docx'], accept_multiple_files=True)
