@@ -8,25 +8,26 @@ import io
 # Streamlit app title
 st.title("CV Parser App")
 
-# Function to extract all text from a PDF
+# Function to extract all text from a PDF (adjusted for BytesIO file in Streamlit)
 def extract_text_from_pdf(pdf_file):
     full_text = ""
     try:
-        with pdfplumber.open(pdf_file) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_file.read())) as pdf:
             for page in pdf.pages:
                 text = page.extract_text(layout=True)
                 if text:
                     full_text += text + "\n"
+                else:
+                    st.write(f"Warning: No text found on page {pdf.pages.index(page) + 1}")
     except Exception as e:
         st.error(f"Error extracting text from PDF: {e}")
     return full_text
 
-
-# Function to extract all text from a Word document
+# Function to extract all text from a Word document (adjusted for BytesIO file in Streamlit)
 def extract_text_from_word(docx_file):
     full_text = ""
     try:
-        doc = Document(docx_file)
+        doc = Document(io.BytesIO(docx_file.read()))
         for para in doc.paragraphs:
             full_text += para.text + "\n"
         for table in doc.tables:
@@ -37,8 +38,7 @@ def extract_text_from_word(docx_file):
         st.error(f"Error extracting text from Word document: {e}")
     return full_text
 
-
-# Enhanced Email Extraction
+# Enhanced Email Extraction (Handles emails split across lines or special formatting)
 def extract_email(text):
     EMAIL_REGEX = r'[\w\.-]+@[\w\.-]+\.\w{2,3}'
     email_match = re.search(EMAIL_REGEX, text.replace("\n", ""))
@@ -56,9 +56,7 @@ def extract_email(text):
             if before_at and after_at:
                 email = before_at.group(0) + "@" + after_at.group(0)
                 return email.replace(' ', '')
-
     return None
-
 
 # Phone Number Extraction
 def extract_phone_number(text):
@@ -72,23 +70,20 @@ def extract_phone_number(text):
             return clean_phone
     return None
 
-
 # Function to extract Name (Focuses on the largest font size and first few words)
 def extract_name(extracted_text):
     lines = extracted_text.splitlines()
     IGNORE_KEYWORDS = ["PROFILE", "SKILLS", "EXPERIENCE", "CONTACT", "EDUCATION", "OBJECTIVE", "SUMMARY"]
 
     potential_name = None
-    for line in lines[:10]:
+    for line in lines[:10]:  # Scan first 10 lines for the name
         line = line.strip()
         if not line or any(keyword in line.upper() for keyword in IGNORE_KEYWORDS):
             continue
         if re.match(r"^[A-Za-z\s]+$", line) and len(line.split()) <= 4:
             potential_name = line
             break
-
     return potential_name
-
 
 # Function to clean and extract name, email, and phone from the extracted text
 def extract_info_from_text(extracted_text):
@@ -99,18 +94,14 @@ def extract_info_from_text(extracted_text):
     }
     return info
 
-
 # Function to process files (PDF, Word)
 def process_file(file, file_type):
     extracted_text = ""
-
     if file_type == '.pdf':
         extracted_text = extract_text_from_pdf(file)
     elif file_type == '.docx':
         extracted_text = extract_text_from_word(file)
-
     return extract_info_from_text(extracted_text)
-
 
 # Main Streamlit logic
 uploaded_files = st.file_uploader("Upload CVs (PDF or Word)", type=['pdf', 'docx'], accept_multiple_files=True)
@@ -123,11 +114,7 @@ if uploaded_files:
 
         st.write(f"Processing {file_name}...")
 
-        if file_extension == 'pdf':
-            info = process_file(uploaded_file, '.pdf')
-        elif file_extension == 'docx':
-            info = process_file(uploaded_file, '.docx')
-
+        info = process_file(uploaded_file, f'.{file_extension}')
         info['File Name'] = file_name
         data.append(info)
 
