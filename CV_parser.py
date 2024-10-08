@@ -6,7 +6,6 @@ import streamlit as st
 import io
 import xlsxwriter
 
-
 # Streamlit app title
 st.title("CV Parser App")
 
@@ -15,14 +14,16 @@ def extract_text_from_pdf(pdf_file):
     full_text = ""
     try:
         with pdfplumber.open(io.BytesIO(pdf_file.read())) as pdf:
-            for page in pdf.pages:
+            for page_num, page in enumerate(pdf.pages):
                 text = page.extract_text(layout=True)
                 if text:
                     full_text += text + "\n"
                 else:
-                    st.write(f"Warning: No text found on page {pdf.pages.index(page) + 1}")
+                    st.write(f"Warning: No text found on page {page_num + 1} of PDF file.")
     except Exception as e:
         st.error(f"Error extracting text from PDF: {e}")
+    if not full_text.strip():
+        st.write(f"No text was found in the PDF file.")
     return full_text
 
 # Function to extract all text from a Word document (adjusted for BytesIO file in Streamlit)
@@ -38,6 +39,8 @@ def extract_text_from_word(docx_file):
                     full_text += cell.text + "\n"
     except Exception as e:
         st.error(f"Error extracting text from Word document: {e}")
+    if not full_text.strip():
+        st.write(f"No text was found in the Word document.")
     return full_text
 
 # Enhanced Email Extraction (Handles emails split across lines or special formatting)
@@ -126,13 +129,18 @@ if uploaded_files:
     # Display extracted data in the app
     st.dataframe(df)
 
-    # Provide download button for the extracted data as an Excel file
+    # Create a BytesIO buffer to save the Excel file in memory
     output = io.BytesIO()
+
+    # Write the data to the Excel file using ExcelWriter and xlsxwriter
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False)
-        writer.save()
+        writer.close()
+
+    # Move the buffer position to the beginning
     output.seek(0)
 
+    # Provide download button for the extracted data as an Excel file
     st.download_button(
         label="Download extracted data as Excel",
         data=output,
