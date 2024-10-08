@@ -1,206 +1,152 @@
-import requests
-import streamlit as st
 import re
 import pdfplumber
-from PIL import Image
 from docx import Document
-import io
 import pandas as pd
+import streamlit as st
+import io
 
-# OCR.space API key (replace with your key)
-OCR_API_KEY = "K81881349288957"
+# Streamlit app title
+st.title("CV Parser App")
 
-
-# Function to sanitize filenames by removing special characters
-def sanitize_filename(filename):
-    # Replace special characters with underscores
-    return re.sub(r'[^\w\s-]', '', filename).strip().replace(' ', '_')
-
-
-# Function to extract text from images using OCR.space API
-def extract_text_from_image_api(image):
-    api_url = "https://api.ocr.space/parse/image"
-
-    # Convert the image to bytes
-    image_bytes = io.BytesIO()
-    image.save(image_bytes, format='PNG')
-    image_bytes = image_bytes.getvalue()
-
-    # Send the image to OCR API
-    payload = {
-        'apikey': OCR_API_KEY,
-        'language': 'ara,eng',  # Support both Arabic and English
-    }
-    files = {
-        'file': ('image.png', image_bytes, 'image/png'),
-    }
-
-    response = requests.post(api_url, files=files, data=payload)
-
-    # Check for errors in the API response
-    if response.status_code != 200:
-        st.error(f"Error: OCR API request failed with status {response.status_code}")
-        return ""
-
-    result = response.json()
-    if "ParsedResults" not in result or not result["ParsedResults"]:
-        st.error("No ParsedResults found in the OCR API response.")
-        return ""
-
-    # Extract the text from the API response
-    extracted_text = result["ParsedResults"][0].get("ParsedText", "")
-    return extracted_text
-
-
-# Function to extract text from a PDF, handling both text and images
+# Function to extract all text from a PDF
 def extract_text_from_pdf(pdf_file):
     full_text = ""
-    with pdfplumber.open(pdf_file) as pdf:
-        for page in pdf.pages:
-            # Extract text from the page
-            text = page.extract_text()
-            if text:
-                full_text += text + "\n"
-            else:
-                # If no text is found, attempt OCR on any images on the page
-                for image in page.images:
-                    img = page.to_image()
-                    ocr_text = extract_text_from_image_api(img.original)
-                    full_text += ocr_text + "\n"
+    try:
+        with pdfplumber.open(pdf_file) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text(layout=True)
+                if text:
+                    full_text += text + "\n"
+    except Exception as e:
+        st.error(f"Error extracting text from PDF: {e}")
     return full_text
 
 
-# Function to extract text from a Word document, including OCR on images
+# Function to extract all text from a Word document
 def extract_text_from_word(docx_file):
     full_text = ""
-    doc = Document(docx_file)
-
-    # Extract text from paragraphs
-    for para in doc.paragraphs:
-        full_text += para.text + "\n"
-
-    # Extract images and perform OCR
-    for rel in doc.part.rels.values():
-        if "image" in rel.target_ref:
-            img_part = rel.target_part
-            img = Image.open(io.BytesIO(img_part.blob))
-            ocr_text = extract_text_from_image_api(img)
-            full_text += ocr_text + "\n"
-
+    try:
+        doc = Document(docx_file)
+        for para in doc.paragraphs:
+            full_text += para.text + "\n"
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    full_text += cell.text + "\n"
+    except Exception as e:
+        st.error(f"Error extracting text from Word document: {e}")
     return full_text
 
 
-# Function to extract text from an image file directly
-def extract_text_from_image_file(image_file):
-    img = Image.open(image_file)
-    ocr_text = extract_text_from_image_api(img)
-    return ocr_text
+# Enhanced Email Extraction
+def extract_email(text):
+    EMAIL_REGEX = r'[\w\.-]+@[\w\.-]+\.\w{2,3}'
+    email_match = re.search(EMAIL_REGEX, text.replace("\n", ""))
+    if email_match:
+        email = email_match.group(0).replace(' ', '')
+        return email
+
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if "@" in line:
+            before_at = re.search(r'[\w\.-]+', line)
+            after_at = None
+            if i + 1 < len(lines):
+                after_at = re.search(r'[\w\.-]+\.\w{2,3}', lines[i + 1])
+            if before_at and after_at:
+                email = before_at.group(0) + "@" + after_at.group(0)
+                return email.replace(' ', '')
+
+    return None
+
+
+# Phone Number Extraction
+def extract_phone_number(text):
+    PHONE_REGEX = r'(\+?\d{1,3}[- ]?\d{1,4}[- ]?\d{7,12})'
+    phone_matches = re.findall(PHONE_REGEX, text)
+    for phone in phone_matches:
+        clean_phone = re.sub(r'[^+\d]', '', phone)
+        if clean_phone.startswith('+') and len(clean_phone) == 12:
+            return clean_phone
+        elif clean_phone.startswith('0') and len(clean_phone) == 11:
+            return clean_phone
+    return None
+
+
+# Function to extract Name (Focuses on the largest font size and first few words)
+def extract_name(extracted_text):
+    lines = extracted_text.splitlines()
+    IGNORE_KEYWORDS = ["PROFILE", "SKILLS", "EXPERIENCE", "CONTACT", "EDUCATION", "OBJECTIVE", "SUMMARY"]
+
+    potential_name = None
+    for line in lines[:10]:
+        line = line.strip()
+        if not line or any(keyword in line.upper() for keyword in IGNORE_KEYWORDS):
+            continue
+        if re.match(r"^[A-Za-z\s]+$", line) and len(line.split()) <= 4:
+            potential_name = line
+            break
+
+    return potential_name
 
 
 # Function to clean and extract name, email, and phone from the extracted text
 def extract_info_from_text(extracted_text):
     info = {
-        "Name": None,
-        "Email": None,
-        "Phone": None
+        "Name": extract_name(extracted_text),
+        "Email": extract_email(extracted_text),
+        "Phone": extract_phone_number(extracted_text)
     }
-
-    EMAIL_REGEX = r'[\w\.-]+@[\w\.-]+\.\w+'
-    PHONE_REGEX = r'(\+?\d{1,3}[-/]?\d{1,4}[-/]?\d{7,9})'  # Ensures at least 11 digits in total
-
-    # Extract email
-    email_match = re.search(EMAIL_REGEX, extracted_text)
-    if email_match:
-        info["Email"] = email_match.group(0)
-
-    # Extract phone
-    phone_matches = re.findall(PHONE_REGEX, extracted_text)
-    if phone_matches:
-        # Clean phone number (remove spaces and special characters)
-        clean_phone = re.sub(r'[^+\d]', '', phone_matches[0])  # Remove all except digits and the plus sign
-        info["Phone"] = clean_phone
-
-    # Clean up and extract name (removing excessive spaces between letters)
-    lines = extracted_text.splitlines()
-    if len(lines) > 0:
-        raw_name = lines[0].strip()  # First line is assumed to be the name
-        cleaned_name = re.sub(r'\s+', ' ', raw_name)  # Remove excessive spacing between letters
-        info["Name"] = cleaned_name.strip()
-
     return info
 
 
-# Function to process files (PDF, Word, or Image)
-def process_file(uploaded_file, sanitized_filename):
+# Function to process files (PDF, Word)
+def process_file(file, file_type):
     extracted_text = ""
 
-    # Check file type and extract text accordingly
-    if sanitized_filename.endswith('.pdf'):
-        extracted_text = extract_text_from_pdf(uploaded_file)
-    elif sanitized_filename.endswith('.docx'):
-        extracted_text = extract_text_from_word(uploaded_file)
-    elif sanitized_filename.endswith(('.png', '.jpg', '.jpeg')):
-        extracted_text = extract_text_from_image_file(uploaded_file)
+    if file_type == '.pdf':
+        extracted_text = extract_text_from_pdf(file)
+    elif file_type == '.docx':
+        extracted_text = extract_text_from_word(file)
 
-    # Extract relevant information (Name, Email, Phone)
-    info = extract_info_from_text(extracted_text)
-
-    # Debugging: Check if all fields are empty
-    if not info['Name'] and not info['Email'] and not info['Phone']:
-        st.warning(f"Failed to extract data from: {sanitized_filename}")
-
-    return info
+    return extract_info_from_text(extracted_text)
 
 
-# Streamlit interface
-st.title("CV Parser App")
+# Main Streamlit logic
+uploaded_files = st.file_uploader("Upload CVs (PDF or Word)", type=['pdf', 'docx'], accept_multiple_files=True)
 
-# File uploader (accepting multiple PDFs, Word, and image files)
-uploaded_files = st.file_uploader("Choose PDF, Word, or Image files", type=["pdf", "docx", "png", "jpg", "jpeg"],
-                                  accept_multiple_files=True)
+if uploaded_files:
+    data = []
+    for uploaded_file in uploaded_files:
+        file_name = uploaded_file.name
+        file_extension = file_name.split('.')[-1].lower()
 
-# Button to start the parsing process
-if st.button("Upload Resumes"):
-    if uploaded_files:
-        data = []
-        for uploaded_file in uploaded_files:
-            # Sanitize the filename
-            sanitized_filename = sanitize_filename(uploaded_file.name)
+        st.write(f"Processing {file_name}...")
 
-            # Log the sanitized filename for debugging
-            st.write(f"Processing file: {sanitized_filename}")
+        if file_extension == 'pdf':
+            info = process_file(uploaded_file, '.pdf')
+        elif file_extension == 'docx':
+            info = process_file(uploaded_file, '.docx')
 
-            # Process the file (extracting text and info)
-            try:
-                info = process_file(uploaded_file, sanitized_filename)
-                info['File Name'] = sanitized_filename
-                data.append(info)
-            except Exception as e:
-                # Log the full error message for debugging
-                st.error(f"Error processing file '{sanitized_filename}': {str(e)}")
-                continue
+        info['File Name'] = file_name
+        data.append(info)
 
-        # If we have valid data, display and allow download
-        if data:
-            df = pd.DataFrame(data)
+    # Create DataFrame from extracted data
+    df = pd.DataFrame(data)
 
-            # Create an in-memory buffer to store the Excel file
-            buffer = io.BytesIO()
+    # Display extracted data in the app
+    st.dataframe(df)
 
-            # Save the DataFrame to the buffer using the openpyxl engine
-            df.to_excel(buffer, engine='openpyxl', index=False)
+    # Provide download button for the extracted data as an Excel file
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+        writer.save()
+    output.seek(0)
 
-            # Move the buffer's pointer to the beginning
-            buffer.seek(0)
-
-            # Provide a download button for users to download the Excel file
-            st.download_button(
-                label="Download Excel file",
-                data=buffer,
-                file_name='parsed_resumes.xlsx',
-                mime='application/vnd.ms-excel'
-            )
-        else:
-            st.error("No valid resumes were processed.")
-    else:
-        st.error("Please upload at least one file.")
+    st.download_button(
+        label="Download extracted data as Excel",
+        data=output,
+        file_name="extracted_cv_data.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
