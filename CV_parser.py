@@ -4,6 +4,8 @@ from docx import Document
 import pandas as pd
 import streamlit as st
 import io
+import xlsxwriter
+
 
 # Streamlit app title
 st.title("CV Parser App")
